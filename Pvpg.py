@@ -4,8 +4,8 @@ import json
 
 st.set_page_config(page_title="SYNC ARENA Online", layout="centered")
 
-st.title("⚔️ SYNC ARENA: Mobile Ready")
-st.write("이제 모바일에서도 터치로 플레이할 수 있습니다!")
+st.title("⚔️ SYNC ARENA: Online")
+st.write("같은 Room ID를 입력하고 START를 눌러주세요.")
 
 FIREBASE_CONFIG = {
     "apiKey": "AIzaSyByXhG3mytCcapT0o260PU1RUYwltQGg94",
@@ -28,12 +28,18 @@ game_html = f"""
 
         let ph, eh=100, pu=0, px=80, ex=80, pb=0, eb=0, inv=false, bsy=false, isUlt=false, end=false;
         let myRole = "", enemyRole = "", roomId = "", hero = 'W', vY=0, animId;
-        const cfg = {{ W: {{h:100, r:120, d:12, type:'n'}}, A: {{h:70, r:90, d:18, type:'n'}}, S: {{h:90, r:100, d:10, type:'s'}} }};
+        const cfg = {{ 
+            W: {{h:100, r:120, d:12, type:'n'}}, 
+            A: {{h:70, r:90, d:18, type:'n'}}, 
+            S: {{h:90, r:100, d:10, type:'s'}} 
+        }};
         const keys = {{}};
+        let moveLeft = false, moveRight = false;
 
-        // [네트워크 동기화 및 승패 로직 - 유지]
         window.go = () => {{
-            roomId = document.getElementById('room-input').value || "room_1";
+            const input = document.getElementById('room-input').value;
+            if(!input) {{ alert("Room ID를 입력하세요!"); return; }}
+            roomId = input;
             joinRoom(roomId);
         }};
 
@@ -41,9 +47,8 @@ game_html = f"""
             const roomRef = ref(db, 'rooms/' + id);
             onValue(roomRef, (snapshot) => {{
                 const data = snapshot.val();
-                if (!data) return;
                 if (!myRole) {{
-                    if (!data.p1) {{ myRole = "p1"; enemyRole = "p2"; }}
+                    if (!data || !data.p1) {{ myRole = "p1"; enemyRole = "p2"; }}
                     else if (!data.p2) {{ myRole = "p2"; enemyRole = "p1"; }}
                     else {{ alert("방이 꽉 찼습니다!"); return; }}
                     const myRef = ref(db, `rooms/${{id}}/${{myRole}}`);
@@ -51,19 +56,18 @@ game_html = f"""
                     set(myRef, {{ x:80, y:0, hp:cfg[hero].h, act:0, hero:hero, pu:0 }});
                     startGame();
                 }}
-                if (data.winner && !end) {{
+                if (data && data.winner && !end) {{
                     end = true;
                     showResult(data.winner === myRole ? "VICTORY" : "GAME OVER");
                 }}
-                if (data[enemyRole]) {{
+                if (data && data[enemyRole]) {{
                     const ed = data[enemyRole];
                     ex = 600 - ed.x - 40; eb = ed.y; eh = ed.hp;
                     if(ed.act === 1) triggerEnemyAttack(cfg[ed.hero].r);
                     if(ed.act === 2) triggerEnemyDodge();
                     if(ed.act === 3) triggerEnemyUlt(ed.hero);
-                    if (eh <= 0 && !data.winner) update(ref(db, 'rooms/' + roomId), {{ winner: myRole }});
                 }}
-                if (data[myRole]) {{
+                if (data && data[myRole]) {{
                     ph = data[myRole].hp;
                     if (ph <= 0 && !data.winner) update(ref(db, 'rooms/' + roomId), {{ winner: enemyRole }});
                 }}
@@ -75,19 +79,18 @@ game_html = f"""
             update(ref(db, `rooms/${{roomId}}/${{myRole}}`), {{ x:px, y:pb, hp:ph, act:act, pu:pu }});
         }}
 
-        // [액션 함수들]
         window.attack = () => {{
             if(bsy || isUlt || end) return;
             bsy = true; sync(1);
             const range = cfg[hero].r;
-            document.getElementById('p-w').style.width = range + 'px';
-            document.getElementById('p-w').style.opacity = 1;
+            const w = document.getElementById('p-w');
+            w.style.width = range + 'px'; w.style.opacity = 1;
             let dist = 600 - px - (600 - ex - 40) - 40;
             if(dist < range && dist > -30 && pb < 100) {{
                 update(ref(db, `rooms/${{roomId}}/${{enemyRole}}`), {{ hp: Math.max(0, eh - cfg[hero].d) }});
                 pu = Math.min(100, pu + 15);
             }}
-            setTimeout(() => {{ document.getElementById('p-w').style.width = 0; document.getElementById('p-w').style.opacity = 0; bsy = false; sync(0); }}, 150);
+            setTimeout(() => {{ w.style.width = 0; w.style.opacity = 0; bsy = false; sync(0); }}, 150);
         }};
 
         window.dodge = () => {{
@@ -98,9 +101,7 @@ game_html = f"""
             setTimeout(() => {{ document.getElementById('p').classList.remove('spinning'); inv = false; sync(0); }}, 450);
         }};
 
-        window.jump = () => {{
-            if(pb === 0 && !isUlt && !end) vY = 22;
-        }};
+        window.jump = () => {{ if(pb === 0 && !isUlt && !end) vY = 22; }};
 
         window.ultimate = () => {{
             if(pu < 100 || bsy || end || inv || isUlt) return;
@@ -117,8 +118,7 @@ game_html = f"""
                         if(keys['ArrowRight'] || moveRight) px = Math.min(540, px + 10);
                         let dist = 600 - px - (600 - ex - 40) - 40;
                         if(Math.abs(dist) < 60 && pb < 100) update(ref(db, `rooms/${{roomId}}/${{enemyRole}}`), {{ hp: Math.max(0, eh - 3) }});
-                        sync(3);
-                        count++;
+                        sync(3); count++;
                         if(count > 40) {{ clearInterval(ultInt); pEl.classList.remove('spinning'); pEl.style.boxShadow = "none"; isUlt = false; sync(0); }}
                     }}, 30);
                 }} else {{
@@ -131,8 +131,6 @@ game_html = f"""
             }}, 800);
         }};
 
-        // [모바일 터치 이동 변수]
-        let moveLeft = false, moveRight = false;
         window.setMove = (dir, val) => {{ if(dir === 'L') moveLeft = val; if(dir === 'R') moveRight = val; }};
 
         function startGame() {{
@@ -144,9 +142,8 @@ game_html = f"""
         }}
 
         function showResult(msg) {{
-            const resUI = document.getElementById('res-ui');
             document.getElementById('res-msg').innerText = msg;
-            resUI.style.display = 'flex';
+            document.getElementById('res-ui').style.display = 'flex';
             cancelAnimationFrame(animId);
         }}
 
@@ -164,65 +161,63 @@ game_html = f"""
             document.getElementById('e').style.right = (600 - ex - 40) + 'px';
             document.getElementById('e').style.bottom = eb + 'px';
             document.getElementById('p-h').style.width = (ph/cfg[hero].h*100)+'%';
-            document.getElementById('e-h').style.width = eh + '%';
+            document.getElementById('e-h').style.width = (eh) + '%';
             document.getElementById('p-u').style.width = pu + '%';
             animId = requestAnimationFrame(gameLoop);
         }}
 
         window.sel = (t, el) => {{ hero=t; document.querySelectorAll('.c-btn').forEach(b=>b.classList.remove('on')); el.classList.add('on'); }};
-        window.addEventListener('keydown', e => {{ keys[e.code]=true; if(e.code==='Space') attack(); if(e.code==='ArrowDown') dodge(); if(e.code==='ArrowUp') jump(); if(e.code.includes('Shift')) ultimate(); }});
+        window.addEventListener('keydown', e => {{ 
+            keys[e.code]=true; 
+            if(e.code==='Space') attack(); 
+            if(e.code==='ArrowDown') dodge(); 
+            if(e.code==='ArrowUp') jump(); 
+            if(e.code.includes('Shift')) ultimate(); 
+        }});
         window.addEventListener('keyup', e => keys[e.code]=false);
         function triggerEnemyAttack(r) {{ const ew=document.getElementById('e-w'); ew.style.width=r+'px'; ew.style.opacity=1; setTimeout(()=>{{ew.style.width=0;ew.style.opacity=0;}},150); }}
         function triggerEnemyDodge() {{ document.getElementById('e').classList.add('spinning'); setTimeout(()=>document.getElementById('e').classList.remove('spinning'),450); }}
-        function triggerEnemyUlt(eHero) {{ /* 연출 생략 */ }}
+        function triggerEnemyUlt(eHero) {{ /* 동기화 연출 */ }}
     </script>
     <style>
         body {{ margin: 0; padding: 0; background: #000; touch-action: manipulation; -webkit-user-select: none; }}
-        #g-area {{ width: 600px; height: 320px; background: #050505; position: relative; margin: 0 auto; border: 2px solid #444; overflow: hidden; font-family: sans-serif; }}
-        #lby {{ position: absolute; inset: 0; background: #111; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; }}
+        #g-area {{ width: 600px; height: 320px; background: #050505; position: relative; margin: 0 auto; border: 2px solid #444; overflow: hidden; }}
+        #lby {{ position: absolute; inset: 0; background: #111; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-family: sans-serif; }}
         #btl {{ display: none; width: 100%; height: 100%; position: relative; }}
-        #p, #e {{ position: absolute; width: 40px; height: 80px; border: 1px solid white; }}
+        #p, #e {{ position: absolute; width: 40px; height: 80px; border: 1px solid white; bottom: 0; }}
         #p {{ background-color: #4d79ff; }} #e {{ background-color: #ff4d4d; }}
-        .wpn {{ position: absolute; top: 30px; height: 8px; background: white; opacity: 0; }}
+        .wpn {{ position: absolute; top: 30px; height: 8px; background: white; opacity: 0; transition: width 0.1s; }}
         #p-w {{ left: 40px; }} #e-w {{ right: 40px; }}
         .hp-b {{ width: 140px; height: 10px; background: #222; border: 1px solid white; }}
         .hp-f {{ height: 100%; transition: 0.1s; }}
         .ult-b {{ width: 140px; height: 4px; background: #111; margin-top:2px; }}
         .ult-f {{ height: 100%; background: #ffcc00; }}
-        #res-ui {{ position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 300; color: white; }}
-        
-        /* 모바일 컨트롤러 스타일 */
         #m-ctrl {{ display: none; width: 600px; margin: 10px auto; justify-content: space-between; }}
-        .m-btn {{ width: 60px; height: 60px; background: #333; border: 2px solid #fff; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; user-select: none; }}
-        .m-btn:active {{ background: #666; }}
-        .c-btn {{ padding: 5px 15px; margin: 5px; background: #222; border: 1px solid #fff; color: white; }}
+        .m-btn {{ width: 60px; height: 60px; background: #333; border: 2px solid #fff; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: sans-serif; font-weight: bold; }}
+        .c-btn {{ padding: 5px 15px; margin: 5px; background: #222; border: 1px solid #fff; color: white; cursor: pointer; }}
         .c-btn.on {{ background: #4d79ff; }}
         .spinning {{ transform: rotate(1080deg); border-radius: 50% !important; }}
-        #cut {{ position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 200; font-size: 30px; color: #ffcc00; }}
-        
-        /* 반응형 스케일링 */
-        @media screen and (max-width: 600px) {{
-            #g-area, #m-ctrl {{ transform: scale(0.6); transform-origin: top center; }}
-            #m-ctrl {{ margin-top: -100px; }}
-        }}
+        #res-ui {{ position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 300; color: white; font-family: sans-serif; }}
+        #cut {{ position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 200; font-size: 30px; color: #ffcc00; font-weight: bold; font-family: sans-serif; }}
     </style>
 </head>
 <body>
     <div id="g-area">
         <div id="lby">
-            <h3>SYNC ARENA</h3>
+            <h2>SYNC ARENA</h2>
             <div>
                 <button class="c-btn on" onclick="sel('W', this)">WARRIOR</button>
                 <button class="c-btn" onclick="sel('A', this)">ASSASSIN</button>
+                <button class="c-btn" onclick="sel('S', this)">SPIN MASTER</button>
             </div>
-            <input type="text" id="room-input" placeholder="Room ID" style="margin: 10px; padding: 5px;">
-            <button onclick="go()" style="padding: 10px 30px; background: #b00; color: white; border: none;">START</button>
+            <input type="text" id="room-input" placeholder="Room ID" style="margin: 10px; padding: 8px;">
+            <button onclick="go()" style="padding: 10px 40px; background: #b00; color: white; border: none; font-weight: bold; cursor: pointer;">START</button>
         </div>
         <div id="btl">
-            <div id="cut">ULTIMATE!!</div>
+            <div id="cut">ULTIMATE SKILL!!</div>
             <div id="res-ui">
                 <h2 id="res-msg"></h2>
-                <button onclick="window.parent.location.reload()">RELOAD</button>
+                <button onclick="window.parent.location.reload()" style="padding: 10px 20px;">RELOAD</button>
             </div>
             <div style="padding: 10px; display: flex; justify-content: space-between;">
                 <div><div class="hp-b"><div id="p-h" class="hp-f" style="background:#4d79ff"></div></div><div class="ult-b"><div id="p-u" class="ult-f"></div></div></div>
@@ -232,7 +227,6 @@ game_html = f"""
             <div id="e"><div id="e-w" class="wpn"></div></div>
         </div>
     </div>
-
     <div id="m-ctrl">
         <div style="display: flex; gap: 10px;">
             <div class="m-btn" ontouchstart="setMove('L', true)" ontouchend="setMove('L', false)">◀</div>
