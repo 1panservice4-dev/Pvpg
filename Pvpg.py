@@ -4,8 +4,8 @@ import json
 
 st.set_page_config(page_title="SYNC ARENA Online", layout="centered")
 
-st.title("⚔️ SYNC ARENA: Online")
-st.write("같은 Room ID를 입력하고 START를 눌러주세요.")
+st.title("⚔️ SYNC ARENA: Full Touch")
+st.write("화면 왼쪽/오른쪽을 터치해 이동하세요! (위/아래 스와이프로 점프/회피)")
 
 FIREBASE_CONFIG = {
     "apiKey": "AIzaSyByXhG3mytCcapT0o260PU1RUYwltQGg94",
@@ -35,11 +35,10 @@ game_html = f"""
         }};
         const keys = {{}};
         let moveLeft = false, moveRight = false;
+        let touchStartY = 0;
 
         window.go = () => {{
-            const input = document.getElementById('room-input').value;
-            if(!input) {{ alert("Room ID를 입력하세요!"); return; }}
-            roomId = input;
+            roomId = document.getElementById('room-input').value || "room_1";
             joinRoom(roomId);
         }};
 
@@ -47,8 +46,9 @@ game_html = f"""
             const roomRef = ref(db, 'rooms/' + id);
             onValue(roomRef, (snapshot) => {{
                 const data = snapshot.val();
+                if (!data) return;
                 if (!myRole) {{
-                    if (!data || !data.p1) {{ myRole = "p1"; enemyRole = "p2"; }}
+                    if (!data.p1) {{ myRole = "p1"; enemyRole = "p2"; }}
                     else if (!data.p2) {{ myRole = "p2"; enemyRole = "p1"; }}
                     else {{ alert("방이 꽉 찼습니다!"); return; }}
                     const myRef = ref(db, `rooms/${{id}}/${{myRole}}`);
@@ -56,18 +56,18 @@ game_html = f"""
                     set(myRef, {{ x:80, y:0, hp:cfg[hero].h, act:0, hero:hero, pu:0 }});
                     startGame();
                 }}
-                if (data && data.winner && !end) {{
+                if (data.winner && !end) {{
                     end = true;
                     showResult(data.winner === myRole ? "VICTORY" : "GAME OVER");
                 }}
-                if (data && data[enemyRole]) {{
+                if (data[enemyRole]) {{
                     const ed = data[enemyRole];
                     ex = 600 - ed.x - 40; eb = ed.y; eh = ed.hp;
                     if(ed.act === 1) triggerEnemyAttack(cfg[ed.hero].r);
                     if(ed.act === 2) triggerEnemyDodge();
                     if(ed.act === 3) triggerEnemyUlt(ed.hero);
                 }}
-                if (data && data[myRole]) {{
+                if (data[myRole]) {{
                     ph = data[myRole].hp;
                     if (ph <= 0 && !data.winner) update(ref(db, 'rooms/' + roomId), {{ winner: enemyRole }});
                 }}
@@ -79,7 +79,8 @@ game_html = f"""
             update(ref(db, `rooms/${{roomId}}/${{myRole}}`), {{ x:px, y:pb, hp:ph, act:act, pu:pu }});
         }}
 
-        window.attack = () => {{
+        // 액션 함수
+        const attack = () => {{
             if(bsy || isUlt || end) return;
             bsy = true; sync(1);
             const range = cfg[hero].r;
@@ -93,7 +94,7 @@ game_html = f"""
             setTimeout(() => {{ w.style.width = 0; w.style.opacity = 0; bsy = false; sync(0); }}, 150);
         }};
 
-        window.dodge = () => {{
+        const dodge = () => {{
             if(inv || isUlt || end) return;
             inv = true; sync(2);
             document.getElementById('p').classList.add('spinning');
@@ -101,9 +102,9 @@ game_html = f"""
             setTimeout(() => {{ document.getElementById('p').classList.remove('spinning'); inv = false; sync(0); }}, 450);
         }};
 
-        window.jump = () => {{ if(pb === 0 && !isUlt && !end) vY = 22; }};
+        const jump = () => {{ if(pb === 0 && !isUlt && !end) vY = 22; }};
 
-        window.ultimate = () => {{
+        const ultimate = () => {{
             if(pu < 100 || bsy || end || inv || isUlt) return;
             pu = 0; isUlt = true; sync(3);
             document.getElementById('cut').style.display = 'flex';
@@ -111,15 +112,15 @@ game_html = f"""
                 document.getElementById('cut').style.display = 'none';
                 if(cfg[hero].type === 's') {{
                     const pEl = document.getElementById('p');
-                    pEl.classList.add('spinning'); pEl.style.boxShadow = "0 0 30px #ffcc00";
+                    pEl.classList.add('spinning');
                     let count = 0;
                     let ultInt = setInterval(() => {{
-                        if(keys['ArrowLeft'] || moveLeft) px = Math.max(0, px - 10);
-                        if(keys['ArrowRight'] || moveRight) px = Math.min(540, px + 10);
+                        if(moveLeft) px = Math.max(0, px - 10);
+                        if(moveRight) px = Math.min(540, px + 10);
                         let dist = 600 - px - (600 - ex - 40) - 40;
                         if(Math.abs(dist) < 60 && pb < 100) update(ref(db, `rooms/${{roomId}}/${{enemyRole}}`), {{ hp: Math.max(0, eh - 3) }});
                         sync(3); count++;
-                        if(count > 40) {{ clearInterval(ultInt); pEl.classList.remove('spinning'); pEl.style.boxShadow = "none"; isUlt = false; sync(0); }}
+                        if(count > 40) {{ clearInterval(ultInt); pEl.classList.remove('spinning'); isUlt = false; sync(0); }}
                     }}, 30);
                 }} else {{
                     bsy = true; let r = cfg[hero].r * 2.5; const w = document.getElementById('p-w');
@@ -131,20 +132,42 @@ game_html = f"""
             }}, 800);
         }};
 
-        window.setMove = (dir, val) => {{ if(dir === 'L') moveLeft = val; if(dir === 'R') moveRight = val; }};
+        // 터치 이벤트 핸들러
+        window.handleTouchStart = (e) => {{
+            if(end) return;
+            const t = e.touches;
+            touchStartY = t[0].clientY;
+
+            if (t.length === 1) {{
+                const x = t[0].clientX;
+                if (x < window.innerWidth / 2) moveLeft = true;
+                else moveRight = true;
+            }} else if (t.length === 2) {{
+                attack();
+            }} else if (t.length === 3) {{
+                ultimate();
+            }}
+        }};
+
+        window.handleTouchEnd = (e) => {{
+            moveLeft = false; moveRight = false;
+            const touchEndY = e.changedTouches[0].clientY;
+            const diffY = touchStartY - touchEndY;
+
+            if (diffY > 50) jump(); // Swipe Up
+            else if (diffY < -50) dodge(); // Swipe Down
+        }};
 
         function startGame() {{
             ph = cfg[hero].h;
             document.getElementById('lby').style.display = 'none';
             document.getElementById('btl').style.display = 'block';
-            document.getElementById('m-ctrl').style.display = 'flex';
             gameLoop();
         }}
 
         function showResult(msg) {{
             document.getElementById('res-msg').innerText = msg;
             document.getElementById('res-ui').style.display = 'flex';
-            cancelAnimationFrame(animId);
         }}
 
         function gameLoop() {{
@@ -152,6 +175,7 @@ game_html = f"""
                 if(!inv && !bsy && !isUlt) {{
                     if(keys['ArrowLeft'] || moveLeft) px = Math.max(0, px - 8);
                     if(keys['ArrowRight'] || moveRight) px = Math.min(540, px + 8);
+                    if(keys['ArrowUp'] && pb === 0) jump();
                 }}
                 if(pb > 0 || vY !== 0) {{ vY -= 1.3; pb += vY; if(pb <= 0) {{ pb = 0; vY = 0; }} }}
                 if(!isUlt) sync(inv ? 2 : (bsy ? 1 : 0));
@@ -161,65 +185,57 @@ game_html = f"""
             document.getElementById('e').style.right = (600 - ex - 40) + 'px';
             document.getElementById('e').style.bottom = eb + 'px';
             document.getElementById('p-h').style.width = (ph/cfg[hero].h*100)+'%';
-            document.getElementById('e-h').style.width = (eh) + '%';
+            document.getElementById('e-h').style.width = eh + '%';
             document.getElementById('p-u').style.width = pu + '%';
             animId = requestAnimationFrame(gameLoop);
         }}
 
         window.sel = (t, el) => {{ hero=t; document.querySelectorAll('.c-btn').forEach(b=>b.classList.remove('on')); el.classList.add('on'); }};
-        window.addEventListener('keydown', e => {{ 
-            keys[e.code]=true; 
-            if(e.code==='Space') attack(); 
-            if(e.code==='ArrowDown') dodge(); 
-            if(e.code==='ArrowUp') jump(); 
-            if(e.code.includes('Shift')) ultimate(); 
-        }});
+        window.addEventListener('keydown', e => {{ keys[e.code]=true; if(e.code==='Space') attack(); if(e.code==='ArrowDown') dodge(); if(e.code==='ArrowUp') jump(); if(e.code.includes('Shift')) ultimate(); }});
         window.addEventListener('keyup', e => keys[e.code]=false);
         function triggerEnemyAttack(r) {{ const ew=document.getElementById('e-w'); ew.style.width=r+'px'; ew.style.opacity=1; setTimeout(()=>{{ew.style.width=0;ew.style.opacity=0;}},150); }}
         function triggerEnemyDodge() {{ document.getElementById('e').classList.add('spinning'); setTimeout(()=>document.getElementById('e').classList.remove('spinning'),450); }}
         function triggerEnemyUlt(eHero) {{ /* 동기화 연출 */ }}
     </script>
     <style>
-        body {{ margin: 0; padding: 0; background: #000; touch-action: manipulation; -webkit-user-select: none; }}
-        #g-area {{ width: 600px; height: 320px; background: #050505; position: relative; margin: 0 auto; border: 2px solid #444; overflow: hidden; }}
+        body {{ margin: 0; background: #000; touch-action: none; -webkit-user-select: none; overflow: hidden; }}
+        #g-area {{ width: 100vw; height: 60vh; background: #050505; position: relative; border-bottom: 2px solid #444; overflow: hidden; }}
         #lby {{ position: absolute; inset: 0; background: #111; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; color: white; font-family: sans-serif; }}
         #btl {{ display: none; width: 100%; height: 100%; position: relative; }}
         #p, #e {{ position: absolute; width: 40px; height: 80px; border: 1px solid white; bottom: 0; }}
         #p {{ background-color: #4d79ff; }} #e {{ background-color: #ff4d4d; }}
-        .wpn {{ position: absolute; top: 30px; height: 8px; background: white; opacity: 0; transition: width 0.1s; }}
+        .wpn {{ position: absolute; top: 30px; height: 8px; background: white; opacity: 0; }}
         #p-w {{ left: 40px; }} #e-w {{ right: 40px; }}
-        .hp-b {{ width: 140px; height: 10px; background: #222; border: 1px solid white; }}
+        .hp-b {{ width: 120px; height: 10px; background: #222; border: 1px solid white; }}
         .hp-f {{ height: 100%; transition: 0.1s; }}
-        .ult-b {{ width: 140px; height: 4px; background: #111; margin-top:2px; }}
+        .ult-b {{ width: 120px; height: 4px; background: #111; margin-top:2px; }}
         .ult-f {{ height: 100%; background: #ffcc00; }}
-        #m-ctrl {{ display: none; width: 600px; margin: 10px auto; justify-content: space-between; }}
-        .m-btn {{ width: 60px; height: 60px; background: #333; border: 2px solid #fff; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: sans-serif; font-weight: bold; }}
-        .c-btn {{ padding: 5px 15px; margin: 5px; background: #222; border: 1px solid #fff; color: white; cursor: pointer; }}
+        .c-btn {{ padding: 10px 20px; margin: 5px; background: #222; border: 1px solid #fff; color: white; }}
         .c-btn.on {{ background: #4d79ff; }}
-        .spinning {{ transform: rotate(1080deg); border-radius: 50% !important; }}
         #res-ui {{ position: absolute; inset: 0; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 300; color: white; font-family: sans-serif; }}
         #cut {{ position: absolute; inset: 0; background: rgba(0,0,0,0.8); display: none; align-items: center; justify-content: center; z-index: 200; font-size: 30px; color: #ffcc00; font-weight: bold; font-family: sans-serif; }}
+        .spinning {{ transform: rotate(1080deg); border-radius: 50% !important; }}
     </style>
 </head>
-<body>
+<body ontouchstart="handleTouchStart(event)" ontouchend="handleTouchEnd(event)">
     <div id="g-area">
         <div id="lby">
             <h2>SYNC ARENA</h2>
             <div>
                 <button class="c-btn on" onclick="sel('W', this)">WARRIOR</button>
                 <button class="c-btn" onclick="sel('A', this)">ASSASSIN</button>
-                <button class="c-btn" onclick="sel('S', this)">SPIN MASTER</button>
+                <button class="c-btn" onclick="sel('S', this)">SPIN</button>
             </div>
-            <input type="text" id="room-input" placeholder="Room ID" style="margin: 10px; padding: 8px;">
-            <button onclick="go()" style="padding: 10px 40px; background: #b00; color: white; border: none; font-weight: bold; cursor: pointer;">START</button>
+            <input type="text" id="room-input" placeholder="Room ID" style="margin: 15px; padding: 10px; width: 60%;">
+            <button onclick="go()" style="padding: 10px 50px; background: #b00; color: white; border: none; font-weight: bold;">START</button>
         </div>
         <div id="btl">
-            <div id="cut">ULTIMATE SKILL!!</div>
+            <div id="cut">ULTIMATE!!</div>
             <div id="res-ui">
                 <h2 id="res-msg"></h2>
                 <button onclick="window.parent.location.reload()" style="padding: 10px 20px;">RELOAD</button>
             </div>
-            <div style="padding: 10px; display: flex; justify-content: space-between;">
+            <div style="padding: 15px; display: flex; justify-content: space-between;">
                 <div><div class="hp-b"><div id="p-h" class="hp-f" style="background:#4d79ff"></div></div><div class="ult-b"><div id="p-u" class="ult-f"></div></div></div>
                 <div><div class="hp-b"><div id="e-h" class="hp-f" style="background:#ff4d4d"></div></div></div>
             </div>
@@ -227,20 +243,11 @@ game_html = f"""
             <div id="e"><div id="e-w" class="wpn"></div></div>
         </div>
     </div>
-    <div id="m-ctrl">
-        <div style="display: flex; gap: 10px;">
-            <div class="m-btn" ontouchstart="setMove('L', true)" ontouchend="setMove('L', false)">◀</div>
-            <div class="m-btn" ontouchstart="setMove('R', true)" ontouchend="setMove('R', false)">▶</div>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div class="m-btn" style="background: #b00;" ontouchstart="attack()">ATK</div>
-            <div class="m-btn" style="background: #007bff;" ontouchstart="jump()">JMP</div>
-            <div class="m-btn" style="background: #28a745;" ontouchstart="dodge()">DGE</div>
-            <div class="m-btn" style="background: #ffc107; color: black;" ontouchstart="ultimate()">ULT</div>
-        </div>
+    <div style="color: #666; font-size: 12px; text-align: center; padding: 10px; font-family: sans-serif;">
+        L/R Touch: Move | 2 Fingers: Attack | Swipe Up: Jump | 3 Fingers: Ultimate
     </div>
 </body>
 </html>
 """
 
-components.html(game_html, height=550)
+components.html(game_html, height=600)
